@@ -2,13 +2,13 @@
 
 Most reading on the internet is flat.
 
-Not because the writing is bad — but because the medium doesn’t help. A long page has no pacing. No guidance. No “breathing room.” You either skim, or you drown, or you forget it five minutes later.
+Not because the writing is bad  but because the medium doesn’t help. A long page has no pacing. No guidance. No “breathing room.” You either skim, or you drown, or you forget it five minutes later.
 
 This prototype is an attempt to fix that without turning reading into a video. 
 
 When people ask AI to “narrate,” they usually get a literal storyboard: images for each line, like the text is being replaced. StitchQylt is exploring something more subtle:
 
-motion that follows comprehension — the way attention shifts as you read.
+motion that follows comprehension  the way attention shifts as you read.
 The page responds to the tone and intensity of what’s on-screen, and evolves with your scroll, like scenes changing in the background while the words stay in charge.
 
 What you’ll notice
