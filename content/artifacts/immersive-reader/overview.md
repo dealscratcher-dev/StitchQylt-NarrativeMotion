@@ -42,4 +42,4 @@ What’s next
 	•	Open a clean community workflow: propose a patch → author approves → credit is attached
 
 If you want to suggest improvements:
-Suggest a change (Issue) or View patches (PRs)
+Suggest a change (Issue) or View patches (PRs).
