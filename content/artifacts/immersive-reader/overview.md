@@ -1,51 +1,45 @@
 # Stories That Move (Immersive Reader)
 
-A prototype where **subtitles of internet**.
+Most reading on the internet is flat.
 
-Instead of reading static paragraphs, the reader is augmented with:
-- **Narrative segmentation** (break the content into meaningful beats)
-- **Tone + intensity** (mood detection and strength)
-- **Motion overlays** (visual response to what’s being read)
-- **Scroll-sync** (as you scroll, the “scene” evolves)
+Not because the writing is bad — but because the medium doesn’t help. A long page has no pacing. No guidance. No “breathing room.” You either skim, or you drown, or you forget it five minutes later.
 
-This is an early StitchQylt “patch”:
-> a magazine page that compiles into a demo — safely isolated so a messy patch can’t ruin the whole quilt.
+This prototype is an attempt to fix that without turning reading into a video.
 
----
+When people ask AI to “narrate,” they usually get a literal storyboard: images for each line, like the text is being replaced. StitchQylt is exploring something more subtle:
 
-## What problem this explores
-Reading on the internet is often:
-- too flat (no pacing)
-- too overwhelming (no guidance)
-- too forgettable (no emotional anchors)
+motion that follows comprehension — the way attention shifts as you read.
+The page responds to the tone and intensity of what’s on-screen, and evolves with your scroll, like scenes changing in the background while the words stay in charge.
 
-This prototype explores:  
-**If you prompt an AI to “narrate,” you’ll often get a literal storyboard. This explores something subtler: motion that follows how the reader is taking in the text—the pacing, the emphasis, the shift in tone—without hijacking the imagination.**
+What you’ll notice
 
----
+As you read, the system tries to add a few quiet layers:
+	•	Beats: the content is broken into meaningful segments (not random chopping)
+	•	Tone + intensity: mood and strength shift the “scene”
+	•	Motion overlays: visual response that supports the text, not hijacks it
+	•	Scroll-sync: the scene evolves as you move through the page
 
-## How to use the demo
-1. Paste a URL (article/blog/news)
-2. Click **Load**
-3. Click **Read**
-4. Scroll through the content and watch the narrative motion respond
+Think of it like subtitles for the internet, but instead of subtitles for audio, it’s atmosphere for meaning.
 
----
+Try it
+	1.	Paste any article URL (blog/news/essay)
+	2.	Click Load
+	3.	Click Read
+	4.	Scroll and watch the narrative motion adapt
 
-## What counts as a “successful” experiment
-- The layout loads reliably (no broken pages)
-- The motion feels *reactive but not distracting*
-- The segmentation feels like “beats” not random chopping
-- It works across multiple article styles
+What would count as a win
 
----
+This is early, so the success criteria are simple:
+	•	It loads reliably (no broken pages)
+	•	The motion feels reactive, but not distracting
+	•	The segmentation feels like “beats”
+	•	It works across different writing styles and layouts
 
-## What’s next
-- Improve webpage parsing reliability
-- Add stronger segmentation + scene rules
-- Add “patch notes” per version
-- Add community PR workflow (propose a patch → author decides)
+What’s next
+	•	Make webpage parsing more reliable
+	•	Improve the segmentation rules
+	•	Add versioned “patch notes”
+	•	Open a clean community workflow: propose a patch → author approves → credit is attached
 
-If you want to suggest improvements, use:
-- **Suggest a change** (issue)
-- **View patches** (PRs)
+If you want to suggest improvements:
+Suggest a change (Issue) or View patches (PRs).
