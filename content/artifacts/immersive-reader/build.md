@@ -1,22 +1,75 @@
 # Build
 
-**Run:** `#012`  **Seed:** `1243`  **Mode:** `Dramatic`  **Sandbox:** `Green`  
-[Run] · [Snapshot] · [Copy repro] · [Repo ▾]
+**Run:** `#012`  **Seed:** `1243`  **Mode:** `Dramatic`  **Sandbox:** `Green`  
+[Run] · [Snapshot] · [Copy repro] · [Repo]
 
-> This panel describes how the artifact is assembled: **Inputs → Transforms → Outputs**.  
-> The demo runs isolated in an iframe.
+This page describes how the artifact is assembled: **Inputs → Transforms → Outputs**.  
+The demo runs isolated in an iframe.
 
 ---
 
-| **Inputs** | **Transforms** | **Outputs** |
-|---|---|---|
-| **Source**  <br> • **URL**: `https://example.com/article` <br> • **Text**: *(optional paste)*  <br><br> **Style**  <br> • Mode: `Quirky` / `Minimal` / **`Dramatic`** <br><br> **Params**  <br> • Seed: `1243` <br> • Intensity: `0.75` <br> • Pace: `Slow` <br> • Max scenes: `12` <br><br> **Dataset (optional)**  <br> • `default` <br> • *(swap dataset)* | <details open> <summary><strong>1) Fetch + Sanitize</strong> <em>✓ 120ms</em></summary> <br> **Consumes:** URL / Text <br> **Does:** Fetches content (if URL), removes unsafe markup, normalizes text. <br> **Produces:** `clean_html`, `clean_text` </details> <br> <details> <summary><strong>2) Extract Blocks</strong> <em>✓ 42 blocks</em></summary> <br> **Consumes:** `clean_html` <br> **Does:** Identifies headings, paragraphs, lists, quotes; builds reading blocks. <br> **Produces:** `blocks[]` </details> <br> <details> <summary><strong>3) Segment Scenes</strong> <em>✓ 7 scenes</em></summary> <br> **Consumes:** `blocks[]` <br> **Does:** Groups blocks into meaningful “beats” (not random chopping). <br> **Produces:** `scenes[]`, `scene_map.json` </details> <br> <details> <summary><strong>4) Motion Map</strong> <em>✓ pacing: “bold”</em></summary> <br> **Consumes:** `scenes[]`, `mode`, `intensity`, `pace` <br> **Does:** Assigns motion behaviors per scene: calm → lift → release. <br> **Produces:** `motion_plan`, `storyboard.json` </details> <br> <details> <summary><strong>5) Render</strong> <em>✓ ready</em></summary> <br> **Consumes:** `motion_plan`, `blocks[]` <br> **Does:** Renders the reading experience + overlays; syncs motion with scroll. <br> **Produces:** iframe demo, `trace.log` </details> <br><br> _Tip: Click each step to expand._ | **Live preview** <br> • iframe demo: **Stories That Move** <br> • View modes: Quirky / Minimal / Dramatic <br><br> **Artifacts** <br> • `storyboard.json`  [↧] <br> • `scene_map.json`  [↧] <br> • `trace.log`  [↧] <br><br> **Snapshots** <br> • `#012` — Dramatic (seed `1243`)  [Open] |
+## Inputs
+
+- **Source**
+  - URL: `https://example.com/article`
+  - Text: *(optional paste)*
+- **Style**
+  - Mode: `Quirky` / `Minimal` / **`Dramatic`**
+- **Params**
+  - Seed: `1243`
+  - Intensity: `0.75`
+  - Pace: `Slow`
+  - Max scenes: `12`
+- **Dataset (optional)**
+  - `default`
+  - *(swap dataset)*
+
+---
+
+## Transforms
+
+1. **Fetch + Sanitize** (✓ ~120ms)  
+   - Consumes: URL / Text  
+   - Does: Fetches content (if URL), removes unsafe markup, normalizes text  
+   - Produces: `clean_html`, `clean_text`
+
+2. **Extract Blocks** (✓ ~42 blocks)  
+   - Consumes: `clean_html`  
+   - Does: Identifies headings, paragraphs, lists, quotes; builds reading blocks  
+   - Produces: `blocks[]`
+
+3. **Segment Scenes** (✓ ~7 scenes)  
+   - Consumes: `blocks[]`  
+   - Does: Groups blocks into meaningful “beats” (not random chopping)  
+   - Produces: `scenes[]`, `scene_map.json`
+
+4. **Motion Map** (✓ pacing: “bold”)  
+   - Consumes: `scenes[]`, `mode`, `intensity`, `pace`  
+   - Does: Assigns motion behaviors per scene (calm → lift → release)  
+   - Produces: `motion_plan`, `storyboard.json`
+
+5. **Render** (✓ ready)  
+   - Consumes: `motion_plan`, `blocks[]`  
+   - Does: Renders the reading experience + overlays; syncs motion with scroll  
+   - Produces: iframe demo, `trace.log`
+
+---
+
+## Outputs
+
+- **Live preview**
+  - iframe demo: **Stories That Move**
+- **Artifacts**
+  - `storyboard.json`
+  - `scene_map.json`
+  - `trace.log`
+- **Snapshots**
+  - `#012` — Dramatic (seed `1243`)
 
 ---
 
 ## Reproduce locally
 
 ```bash
-# from repo root
 npm install
 npm run dev
