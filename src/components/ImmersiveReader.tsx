@@ -1,3 +1,4 @@
+// src/components/ImmersiveReader.tsx
 import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, RotateCcw, Settings, Gauge, Sparkles, Link, FileText, Minimize2, Bug } from 'lucide-react';
 import NarrativeMotion from './NarrativeMotion';
@@ -15,6 +16,59 @@ interface Segment {
   emotion: string;
   intensity: number;
   motion: any;
+}
+
+/** ✅ NEW: sanitize iframe srcDoc (reduces mixed-content + CSP issues that cause blank previews) */
+function sanitizeSrcDocHtml(rawHtml: string): string {
+  if (!rawHtml) return rawHtml;
+
+  // quick pass: upgrade obvious http://
+  let html = rawHtml.replace(/(src|href|poster|action)=["']http:\/\//gi, '$1="https://');
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+
+    // remove CSP meta that can break srcDoc rendering
+    doc
+      .querySelectorAll(
+        'meta[http-equiv="Content-Security-Policy"], meta[http-equiv="content-security-policy"]'
+      )
+      .forEach((m) => m.remove());
+
+    const ATTRS = ['src', 'href', 'poster', 'action'];
+
+    doc.querySelectorAll<HTMLElement>('*').forEach((el) => {
+      for (const attr of ATTRS) {
+        const v = el.getAttribute(attr);
+        if (!v) continue;
+        if (v.startsWith('http://')) el.setAttribute(attr, 'https://' + v.slice('http://'.length));
+      }
+    });
+
+    // remove common spacer gifs (sometimes mixed-content culprits)
+    doc.querySelectorAll('img').forEach((img) => {
+      const src = (img.getAttribute('src') || '').toLowerCase();
+      if (src.includes('spacer.gif')) img.remove();
+    });
+
+    return '<!doctype html>\n' + doc.documentElement.outerHTML;
+  } catch {
+    return html;
+  }
+}
+
+/** ✅ NEW: safe JSON reader so HTML 404 pages / empty responses don’t crash .json() */
+async function safeReadJson(res: Response): Promise<any> {
+  const text = await res.text(); // ALWAYS read as text first
+  if (!text || !text.trim()) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const snippet = text.slice(0, 160).replace(/\s+/g, ' ');
+    throw new Error(`Non-JSON response (HTTP ${res.status}). First bytes: ${snippet}`);
+  }
 }
 
 const STYLE_OPTIONS: Array<{ id: NarrativeStyle; label: string; description: string; icon: string }> = [
@@ -48,9 +102,12 @@ export default function ImmersiveReader() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
   const [debugMode, setDebugMode] = useState(false);
+
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const timerRef = useRef<NodeJS.Timeout>();
-  const hideControlsTimer = useRef<NodeJS.Timeout>();
+
+  // ✅ PATCH: browser-safe timer typing (fixes Netlify/TS env weirdness)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleLoadUrl = async () => {
     if (!urlInput.trim()) return;
@@ -58,49 +115,81 @@ export default function ImmersiveReader() {
     setIsLoadingUrl(true);
     setLoadError('');
 
-    try {
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/fetch-webpage`;
+    // reset state for new load
+    setWebpageHtml('');
+    setInputText('');
+    setStoryboard(null);
+    setShowOverlayMotion(false);
+    setActiveScene(null);
+    setScrollPercent(0);
 
+    try {
+      const base = import.meta.env.VITE_SUPABASE_URL;
+      const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!base || !anon) {
+        throw new Error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY.');
+      }
+
+      const apiUrl = `${String(base).replace(/\/$/, '')}/functions/v1/fetch-webpage`;
+
+      const commonHeaders = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${anon}`
+      };
+
+      // 1) Fetch HTML preview
       const htmlResponse = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({ url: urlInput, mode: 'html' }),
+        headers: commonHeaders,
+        body: JSON.stringify({ url: urlInput, mode: 'html' })
       });
 
-      const htmlData = await htmlResponse.json();
-
-      if (htmlResponse.ok && htmlData.html) {
-        setWebpageHtml(htmlData.html);
+      if (!htmlResponse.ok) {
+        const bodyText = await htmlResponse.text().catch(() => '');
+        const snippet = bodyText.slice(0, 180).replace(/\s+/g, ' ');
+        throw new Error(`fetch-webpage (html) failed: HTTP ${htmlResponse.status}. ${snippet}`);
       }
 
+      const htmlData = await safeReadJson(htmlResponse);
+
+      if (htmlData?.html) {
+        const safeHtml = sanitizeSrcDocHtml(String(htmlData.html));
+        setWebpageHtml(safeHtml);
+      } else {
+        setWebpageHtml('');
+      }
+
+      // 2) Fetch extracted text
       const textResponse = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({ url: urlInput }),
+        headers: commonHeaders,
+        body: JSON.stringify({ url: urlInput })
       });
 
-      const textData = await textResponse.json();
-
       if (!textResponse.ok) {
-        throw new Error(textData.error || 'Failed to fetch webpage');
+        const bodyText = await textResponse.text().catch(() => '');
+        const snippet = bodyText.slice(0, 180).replace(/\s+/g, ' ');
+        throw new Error(`fetch-webpage (text) failed: HTTP ${textResponse.status}. ${snippet}`);
       }
 
-      if (textData.text && textData.text.length > 50) {
-        setInputText(textData.text);
+      const textData = await safeReadJson(textResponse);
+      const extractedText = String(textData?.text || '').trim();
+
+      if (extractedText.length > 50) {
+        setInputText(extractedText);
         setLoadError('');
-        await processStoryboard(urlInput, textData.text);
+
+        // ✅ PATCH: only go fullscreen if we actually have preview HTML
+        if (htmlData?.html) setIsFullscreenView(true);
+
+        await processStoryboard(urlInput, extractedText);
       } else {
         setLoadError('Could not extract readable text from this page');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching webpage:', error);
-      setLoadError(error instanceof Error ? error.message : 'Failed to load webpage');
+      setLoadError(error?.message || 'Failed to load webpage');
     } finally {
       setIsLoadingUrl(false);
     }
@@ -114,14 +203,11 @@ export default function ImmersiveReader() {
       const job = await fastapiClient.processArticle(url, text);
       setProcessingStatus('Generating storyboard...');
 
-      const completedJob = await fastapiClient.pollJobCompletion(
-        job.job_id,
-        (progressJob) => {
-          if (progressJob.progress) {
-            setProcessingStatus(`Processing: ${progressJob.progress}%`);
-          }
+      const completedJob = await fastapiClient.pollJobCompletion(job.job_id, (progressJob) => {
+        if (progressJob.progress) {
+          setProcessingStatus(`Processing: ${progressJob.progress}%`);
         }
-      );
+      });
 
       if (completedJob.article_id) {
         const storyboardData = await fastapiClient.getStoryboard(completedJob.article_id);
@@ -150,7 +236,7 @@ export default function ImmersiveReader() {
     if (!textToProcess.trim()) return;
 
     const segmentTexts = splitIntoSegments(textToProcess, 400);
-    const analyzedSegments = segmentTexts.map(segText => {
+    const analyzedSegments = segmentTexts.map((segText) => {
       const analysis = analyzeNarrative(segText, style);
       return {
         text: segText,
@@ -169,7 +255,7 @@ export default function ImmersiveReader() {
     if (isReading && segments.length > 0) {
       if (currentIndex < segments.length - 1) {
         timerRef.current = setTimeout(() => {
-          setCurrentIndex(prev => prev + 1);
+          setCurrentIndex((prev) => prev + 1);
         }, readingSpeed);
       } else {
         setIsReading(false);
@@ -226,151 +312,158 @@ export default function ImmersiveReader() {
   };
 
   return (
-    <div
-      className="h-full relative overflow-hidden flex"
-      onMouseMove={handleMouseMove}
-    >
-      <div className={`absolute inset-0 bg-gradient-to-br ${currentSegment ? emotionColors[currentSegment.emotion] || emotionColors.neutral : 'from-violet-600 via-fuchsia-600 to-pink-600 opacity-20'} transition-all duration-2000`} />
-      {!currentSegment && <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(120,119,198,0.3),transparent_50%),radial-gradient(circle_at_70%_80%,rgba(236,72,153,0.3),transparent_50%)]" />}
-
-      {currentSegment && (
-        <ParticleBackground emotion={currentSegment.emotion} intensity={currentSegment.intensity} />
+    <div className="h-full relative overflow-hidden flex" onMouseMove={handleMouseMove}>
+      <div
+        className={`absolute inset-0 bg-gradient-to-br ${
+          currentSegment
+            ? emotionColors[currentSegment.emotion] || emotionColors.neutral
+            : 'from-violet-600 via-fuchsia-600 to-pink-600 opacity-20'
+        } transition-all duration-2000`}
+      />
+      {!currentSegment && (
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(120,119,198,0.3),transparent_50%),radial-gradient(circle_at_70%_80%,rgba(236,72,153,0.3),transparent_50%)]" />
       )}
+
+      {currentSegment && <ParticleBackground emotion={currentSegment.emotion} intensity={currentSegment.intensity} />}
 
       {!isFullscreenView && (
         <div className="relative z-10 w-64 flex-shrink-0 border-r border-slate-700/50 bg-slate-900/30 backdrop-blur-sm p-6 flex flex-col">
-        <div className="mb-8">
-          <div className="inline-flex items-center gap-2 mb-2">
-            <Sparkles className="w-4 h-4 text-violet-300" />
-            <span className="text-xs text-violet-200 font-medium uppercase tracking-wider">Narrative Style</span>
+          <div className="mb-8">
+            <div className="inline-flex items-center gap-2 mb-2">
+              <Sparkles className="w-4 h-4 text-violet-300" />
+              <span className="text-xs text-violet-200 font-medium uppercase tracking-wider">
+                Narrative Style
+              </span>
+            </div>
+          </div>
+
+          <div className="flex-1 space-y-3 overflow-y-auto">
+            {STYLE_OPTIONS.map((style) => (
+              <button
+                key={style.id}
+                onClick={() => setNarrativeStyle(style.id)}
+                className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
+                  narrativeStyle === style.id
+                    ? 'border-violet-500 bg-violet-500/20 shadow-lg shadow-violet-500/30'
+                    : 'border-slate-700/50 bg-slate-800/30 hover:border-slate-600 hover:bg-slate-800/50'
+                }`}
+              >
+                <div className="text-3xl mb-2">{style.icon}</div>
+                <div className="text-sm font-semibold text-slate-200">{style.label}</div>
+                <div className="text-xs text-slate-400 mt-1">{style.description}</div>
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-6 pt-6 border-t border-slate-700/50">
+            <div className="text-xs text-slate-500 text-center">Motion adapts in real-time</div>
           </div>
         </div>
-
-        <div className="flex-1 space-y-3 overflow-y-auto">
-          {STYLE_OPTIONS.map((style) => (
-            <button
-              key={style.id}
-              onClick={() => setNarrativeStyle(style.id)}
-              className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
-                narrativeStyle === style.id
-                  ? 'border-violet-500 bg-violet-500/20 shadow-lg shadow-violet-500/30'
-                  : 'border-slate-700/50 bg-slate-800/30 hover:border-slate-600 hover:bg-slate-800/50'
-              }`}
-            >
-              <div className="text-3xl mb-2">{style.icon}</div>
-              <div className="text-sm font-semibold text-slate-200">{style.label}</div>
-              <div className="text-xs text-slate-400 mt-1">{style.description}</div>
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-6 pt-6 border-t border-slate-700/50">
-          <div className="text-xs text-slate-500 text-center">
-            Motion adapts in real-time
-          </div>
-        </div>
-      </div>
       )}
 
       <div className="relative z-10 flex-1 flex flex-col">
         {!isFullscreenView && (
-        <div className="p-8 border-b border-slate-700/30 bg-slate-900/20 backdrop-blur-sm">
-          <div className="max-w-5xl mx-auto">
-            <h1 className="text-4xl md:text-5xl font-bold mb-3 bg-gradient-to-r from-violet-200 via-fuchsia-200 to-pink-200 bg-clip-text text-transparent leading-tight">
-              Stories That Move
-            </h1>
-            <p className="text-base text-slate-300">
-              Transform any website or text into an immersive visual experience
-            </p>
+          <div className="p-8 border-b border-slate-700/30 bg-slate-900/20 backdrop-blur-sm">
+            <div className="max-w-5xl mx-auto">
+              <h1 className="text-4xl md:text-5xl font-bold mb-3 bg-gradient-to-r from-violet-200 via-fuchsia-200 to-pink-200 bg-clip-text text-transparent leading-tight">
+                Stories That Move
+              </h1>
+              <p className="text-base text-slate-300">
+                Transform any website or text into an immersive visual experience
+              </p>
+            </div>
           </div>
-        </div>
         )}
 
         <div className={`flex-1 relative flex items-center justify-center ${isFullscreenView ? 'p-0' : 'p-8'}`}>
           {!currentSegment ? (
             <div className={`${isFullscreenView ? 'w-full h-full' : 'max-w-5xl w-full h-full'} flex flex-col`}>
-              <div className={`flex-1 bg-slate-900/40 backdrop-blur-xl ${isFullscreenView ? '' : 'border border-slate-700/50 rounded-3xl shadow-2xl'} flex flex-col overflow-hidden`}>
+              <div
+                className={`flex-1 bg-slate-900/40 backdrop-blur-xl ${
+                  isFullscreenView ? '' : 'border border-slate-700/50 rounded-3xl shadow-2xl'
+                } flex flex-col overflow-hidden`}
+              >
                 {!isFullscreenView && (
-                <div className="p-6 border-b border-slate-700/30 flex items-center gap-4">
-                  <div className="flex gap-2 bg-slate-800/50 p-1 rounded-lg">
-                    <button
-                      onClick={() => setInputMode('url')}
-                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
-                        inputMode === 'url'
-                          ? 'bg-violet-500 text-white shadow-lg'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <Link className="w-4 h-4" />
-                      URL
-                    </button>
-                    <button
-                      onClick={() => setInputMode('text')}
-                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
-                        inputMode === 'text'
-                          ? 'bg-violet-500 text-white shadow-lg'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <FileText className="w-4 h-4" />
-                      Text
-                    </button>
-                  </div>
-
-                  {inputMode === 'url' ? (
-                    <div className="flex-1 flex gap-2">
-                      <input
-                        type="url"
-                        value={urlInput}
-                        onChange={(e) => setUrlInput(e.target.value)}
-                        placeholder="https://example.com/article"
-                        className="flex-1 bg-slate-950/50 border border-slate-700 rounded-lg px-4 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent text-sm"
-                        onKeyDown={(e) => e.key === 'Enter' && handleLoadUrl()}
-                      />
+                  <div className="p-6 border-b border-slate-700/30 flex items-center gap-4">
+                    <div className="flex gap-2 bg-slate-800/50 p-1 rounded-lg">
                       <button
-                        onClick={() => {
-                          handleLoadUrl();
-                          if (!isLoadingUrl) setIsFullscreenView(true);
-                        }}
-                        disabled={!urlInput.trim() || isLoadingUrl}
-                        className="px-6 py-2 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-all text-sm"
+                        onClick={() => setInputMode('url')}
+                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
+                          inputMode === 'url'
+                            ? 'bg-violet-500 text-white shadow-lg'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
                       >
-                        {isLoadingUrl ? 'Loading...' : 'Load'}
+                        <Link className="w-4 h-4" />
+                        URL
                       </button>
-                      {storyboard && (
-                        <button
-                          onClick={() => setDebugMode(!debugMode)}
-                          className={`px-4 py-2 font-medium rounded-lg transition-all text-sm flex items-center gap-2 ${
-                            debugMode
-                              ? 'bg-yellow-500 text-black'
-                              : 'bg-slate-700 hover:bg-slate-600 text-white'
-                          }`}
-                          title="Toggle debug mode"
-                        >
-                          <Bug className="w-4 h-4" />
-                        </button>
-                      )}
                       <button
-                        onClick={() => {
-                          handlePaste(inputText);
-                          if (webpageHtml) setShowOverlayMotion(true);
-                        }}
+                        onClick={() => setInputMode('text')}
+                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
+                          inputMode === 'text'
+                            ? 'bg-violet-500 text-white shadow-lg'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <FileText className="w-4 h-4" />
+                        Text
+                      </button>
+                    </div>
+
+                    {inputMode === 'url' ? (
+                      <div className="flex-1 flex gap-2">
+                        <input
+                          type="url"
+                          value={urlInput}
+                          onChange={(e) => setUrlInput(e.target.value)}
+                          placeholder="https://example.com/article"
+                          className="flex-1 bg-slate-950/50 border border-slate-700 rounded-lg px-4 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent text-sm"
+                          onKeyDown={(e) => e.key === 'Enter' && handleLoadUrl()}
+                        />
+                        <button
+                          onClick={() => {
+                            // ✅ PATCH: do NOT force fullscreen here; handleLoadUrl decides
+                            handleLoadUrl();
+                          }}
+                          disabled={!urlInput.trim() || isLoadingUrl}
+                          className="px-6 py-2 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-all text-sm"
+                        >
+                          {isLoadingUrl ? 'Loading...' : 'Load'}
+                        </button>
+
+                        {storyboard && (
+                          <button
+                            onClick={() => setDebugMode(!debugMode)}
+                            className={`px-4 py-2 font-medium rounded-lg transition-all text-sm flex items-center gap-2 ${
+                              debugMode ? 'bg-yellow-500 text-black' : 'bg-slate-700 hover:bg-slate-600 text-white'
+                            }`}
+                            title="Toggle debug mode"
+                          >
+                            <Bug className="w-4 h-4" />
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => {
+                            handlePaste(inputText);
+                            if (webpageHtml) setShowOverlayMotion(true);
+                          }}
+                          disabled={!inputText.trim()}
+                          className="px-6 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 disabled:from-slate-700 disabled:to-slate-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-all text-sm shadow-lg hover:shadow-xl hover:shadow-fuchsia-500/30 disabled:shadow-none"
+                        >
+                          Read
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handlePaste(inputText)}
                         disabled={!inputText.trim()}
-                        className="px-6 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 disabled:from-slate-700 disabled:to-slate-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-all text-sm shadow-lg hover:shadow-xl hover:shadow-fuchsia-500/30 disabled:shadow-none"
+                        className="px-8 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 disabled:from-slate-700 disabled:to-slate-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-all text-sm shadow-lg hover:shadow-xl hover:shadow-fuchsia-500/30 disabled:shadow-none"
                       >
                         Read
                       </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => handlePaste(inputText)}
-                      disabled={!inputText.trim()}
-                      className="px-8 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 disabled:from-slate-700 disabled:to-slate-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-all text-sm shadow-lg hover:shadow-xl hover:shadow-fuchsia-500/30 disabled:shadow-none"
-                    >
-                      Read
-                    </button>
-                  )}
-                </div>
+                    )}
+                  </div>
                 )}
 
                 <div className="flex-1 relative overflow-hidden">
@@ -383,6 +476,7 @@ export default function ImmersiveReader() {
                       <Minimize2 className="w-5 h-5" />
                     </button>
                   )}
+
                   {inputMode === 'text' ? (
                     <textarea
                       value={inputText}
@@ -399,6 +493,7 @@ export default function ImmersiveReader() {
                         sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
                         title="Website Preview"
                       />
+
                       {showOverlayMotion && storyboard && (
                         <>
                           <IframeScrollBridge
@@ -412,12 +507,10 @@ export default function ImmersiveReader() {
                             onActiveSceneChange={handleActiveSceneChange}
                             debugMode={debugMode}
                           />
-                          <SceneOverlay
-                            scene={activeScene}
-                            isActive={showOverlayMotion}
-                          />
+                          <SceneOverlay scene={activeScene} isActive={showOverlayMotion} />
                         </>
                       )}
+
                       {isProcessing && (
                         <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
                           <div className="bg-slate-900/90 backdrop-blur-xl rounded-2xl p-8 border border-slate-700/50 shadow-2xl max-w-md">
@@ -465,16 +558,10 @@ export default function ImmersiveReader() {
               </div>
             </div>
           ) : (
-            <NarrativeMotion
-              motionType={currentSegment.motion}
-              intensity={currentSegment.intensity}
-              isActive={isReading}
-            >
+            <NarrativeMotion motionType={currentSegment.motion} intensity={currentSegment.intensity} isActive={isReading}>
               <div className="max-w-5xl mx-auto">
                 <div className="bg-slate-900/40 backdrop-blur-2xl rounded-3xl p-12 md:p-16 shadow-2xl border border-slate-700/30 transition-all duration-700">
-                  <p className="text-2xl md:text-4xl leading-relaxed text-slate-50 font-light">
-                    {currentSegment.text}
-                  </p>
+                  <p className="text-2xl md:text-4xl leading-relaxed text-slate-50 font-light">{currentSegment.text}</p>
                 </div>
 
                 <div className="mt-8 flex flex-wrap items-center justify-center gap-4 text-sm">
@@ -495,7 +582,11 @@ export default function ImmersiveReader() {
       </div>
 
       {currentSegment && (
-        <div className={`fixed bottom-0 left-64 right-0 bg-gradient-to-t from-slate-950 via-slate-950/98 to-transparent p-6 transition-all duration-500 ${showControls ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}>
+        <div
+          className={`fixed bottom-0 left-64 right-0 bg-gradient-to-t from-slate-950 via-slate-950/98 to-transparent p-6 transition-all duration-500 ${
+            showControls ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'
+          }`}
+        >
           <div className="max-w-5xl mx-auto">
             <div className="bg-slate-900/90 backdrop-blur-xl rounded-3xl p-6 border border-slate-700/50 shadow-2xl">
               <div className="flex items-center gap-6">
@@ -518,7 +609,9 @@ export default function ImmersiveReader() {
 
                   <button
                     onClick={() => setShowSettings(!showSettings)}
-                    className={`p-3 hover:bg-slate-800 rounded-xl transition-colors text-slate-300 hover:text-white ${showSettings ? 'bg-slate-800' : ''}`}
+                    className={`p-3 hover:bg-slate-800 rounded-xl transition-colors text-slate-300 hover:text-white ${
+                      showSettings ? 'bg-slate-800' : ''
+                    }`}
                     title="Settings"
                   >
                     <Settings className="w-5 h-5" />
