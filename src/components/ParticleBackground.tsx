@@ -18,36 +18,41 @@ export default function ParticleBackground({ emotion, intensity }: ParticleBackg
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
+    // --- Emoji Mapping based on Emotion ---
+    const emotionEmojis: Record<string, string[]> = {
+      calm: ['🌊', '☁️', '🍃'],
+      tense: ['⚡', '💥', '🔥'],
+      exciting: ['✨', '🎉', '🚀'],
+      sad: ['💧', '🌧️', '🌑'],
+      joyful: ['☀️', '🌸', '🎈'],
+      mysterious: ['🔮', '🌌', '👁️'],
+      neutral: ['⚪', '🔘', '🌫️']
+    };
+
+    const emojis = emotionEmojis[emotion] || emotionEmojis.neutral;
+    const particleCount = Math.floor(20 + intensity * 30); // Reduced count for performance with text
+
     const particles: Array<{
       x: number;
       y: number;
       vx: number;
       vy: number;
-      size: number;
-      opacity: number;
+      emoji: string;
+      fontSize: number;
+      rotation: number;
+      rotationSpeed: number;
     }> = [];
-
-    const emotionColors: Record<string, string[]> = {
-      calm: ['rgba(59, 130, 246, ', 'rgba(96, 165, 250, '],
-      tense: ['rgba(239, 68, 68, ', 'rgba(251, 146, 60, '],
-      exciting: ['rgba(234, 179, 8, ', 'rgba(250, 204, 21, '],
-      sad: ['rgba(148, 163, 184, ', 'rgba(203, 213, 225, '],
-      joyful: ['rgba(34, 197, 94, ', 'rgba(74, 222, 128, '],
-      mysterious: ['rgba(168, 85, 247, ', 'rgba(192, 132, 252, '],
-      neutral: ['rgba(100, 116, 139, ', 'rgba(148, 163, 184, ']
-    };
-
-    const colors = emotionColors[emotion] || emotionColors.neutral;
-    const particleCount = Math.floor(30 + intensity * 50);
 
     for (let i = 0; i < particleCount; i++) {
       particles.push({
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
-        vx: (Math.random() - 0.5) * (0.5 + intensity),
-        vy: (Math.random() - 0.5) * (0.5 + intensity),
-        size: Math.random() * 3 + 1,
-        opacity: Math.random() * 0.5 + 0.3
+        vx: (Math.random() - 0.5) * (0.5 + intensity * 2),
+        vy: (Math.random() - 0.5) * (0.5 + intensity * 2),
+        emoji: emojis[Math.floor(Math.random() * emojis.length)],
+        fontSize: Math.random() * 20 + 10 + intensity * 10,
+        rotation: Math.random() * Math.PI * 2,
+        rotationSpeed: (Math.random() - 0.5) * 0.05
       });
     }
 
@@ -58,35 +63,28 @@ export default function ParticleBackground({ emotion, intensity }: ParticleBackg
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      particles.forEach((particle, index) => {
+      particles.forEach((particle) => {
+        // Move particle
         particle.x += particle.vx;
         particle.y += particle.vy;
+        particle.rotation += particle.rotationSpeed;
 
+        // Bounce off walls
         if (particle.x < 0 || particle.x > canvas.width) particle.vx *= -1;
         if (particle.y < 0 || particle.y > canvas.height) particle.vy *= -1;
 
-        const color = colors[index % colors.length];
-        ctx.fillStyle = `${color}${particle.opacity})`;
-        ctx.beginPath();
-        ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
-        ctx.fill();
-
-        particles.forEach((otherParticle, otherIndex) => {
-          if (index === otherIndex) return;
-
-          const dx = particle.x - otherParticle.x;
-          const dy = particle.y - otherParticle.y;
-          const distance = Math.sqrt(dx * dx + dy * dy);
-
-          if (distance < 120) {
-            ctx.strokeStyle = `${color}${0.1 * (1 - distance / 120)})`;
-            ctx.lineWidth = 0.5;
-            ctx.beginPath();
-            ctx.moveTo(particle.x, particle.y);
-            ctx.lineTo(otherParticle.x, otherParticle.y);
-            ctx.stroke();
-          }
-        });
+        // --- DRAW EMOJI ---
+        ctx.save();
+        ctx.translate(particle.x, particle.y);
+        ctx.rotate(particle.rotation);
+        ctx.font = `${particle.fontSize}px serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        // Intensity affects "glow" or opacity
+        ctx.globalAlpha = 0.4 + (intensity * 0.4); 
+        ctx.fillText(particle.emoji, 0, 0);
+        ctx.restore();
       });
 
       animationId = requestAnimationFrame(animate);
@@ -111,7 +109,7 @@ export default function ParticleBackground({ emotion, intensity }: ParticleBackg
     <canvas
       ref={canvasRef}
       className="absolute inset-0 pointer-events-none"
-      style={{ opacity: 0.4 }}
+      style={{ zIndex: 5 }} // Ensure it stays behind the text but above the background
     />
   );
 }
